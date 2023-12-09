@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Scanner;
+import java.util.concurrent.Callable;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -12,33 +13,32 @@ import org.apache.commons.logging.LogFactory;
 import com.magusgeek.brutaltester.util.Mutable;
 import com.magusgeek.brutaltester.util.SeedGenerator;
 
-public class GameThread extends Thread {
+public class GameThread implements Callable<ArenaStats> {
 	private static final Log LOG = LogFactory.getLog(GameThread.class);
 
 	private Mutable<Integer> count;
-	private PlayerStats stats;
+	private ArenaStats stats;
 	private int n;
 	private BrutalProcess referee;
 	private Path logs;
 	private int game;
 	private String command[];
 	private int playersCount;
-	private List<String> playersCmd;
+	private List<ArenaPlayer> playersCmd;
 	private StringBuilder data = new StringBuilder();
 	private boolean swap;
 	private int pArgIdx[];
 	private int refereeInputIdx;
 
-	public GameThread(int id, String refereeCmd, List<String> playersCmd, Mutable<Integer> count, PlayerStats stats,
-			int n, Path logs, boolean swap) {
-		super("GameThread-" + id);
+	public GameThread(String refereeCmd, List<ArenaPlayer> players, Mutable<Integer> count, int n, Path logs,
+			boolean swap) {
 		this.count = count;
-		this.stats = stats;
 		this.n = n;
 		this.logs = logs;
 		this.swap = swap;
-		this.playersCount = playersCmd.size();
-		this.playersCmd = playersCmd;
+		this.playersCount = players.size();
+		this.stats = new ArenaStats(players);
+		this.playersCmd = players;
 		this.pArgIdx = new int[playersCount];
 		boolean haveSeedArgs = swap || SeedGenerator.repeteableTests;
 
@@ -53,13 +53,13 @@ public class GameThread extends Thread {
 		for (int i = 0; i < playersCount; ++i) {
 			pArgIdx[i] = splitted.length + i * 2 + 1;
 			command[splitted.length + i * 2] = "-p" + (i + 1);
-			command[splitted.length + i * 2 + 1] = playersCmd.get(i);
+			command[splitted.length + i * 2 + 1] = players.get(i).commandLine();
 		}
-		
+
 		if (haveSeedArgs) {
 			this.n *= playersCount;
 			refereeInputIdx = splitted.length + playersCount * 2 + 1;
-			command[refereeInputIdx -1] = "-d";
+			command[refereeInputIdx - 1] = "-d";
 			command[refereeInputIdx] = "";
 		}
 
@@ -80,7 +80,6 @@ public class GameThread extends Thread {
 
 			if (game == 0) {
 				// End of this thread
-				Main.finish();
 				break;
 			}
 
@@ -93,8 +92,8 @@ public class GameThread extends Thread {
 				int seedRotate[] = SeedGenerator.getSeed(playersCount);
 				if (swap) {
 					command[refereeInputIdx] = "seed=" + seedRotate[0];
-					for (int i = 0; i < playersCount; i ++) {
-						command[pArgIdx[i]] = playersCmd.get((i + seedRotate[1]) % playersCount);
+					for (int i = 0; i < playersCount; i++) {
+						command[pArgIdx[i]] = playersCmd.get((i + seedRotate[1]) % playersCount).commandLine();
 					}
 				} else if (SeedGenerator.repeteableTests) {
 					command[refereeInputIdx] = "seed=" + SeedGenerator.nextSeed();
@@ -111,20 +110,15 @@ public class GameThread extends Thread {
 				try (Scanner in = referee.getIn()) {
 					for (int pi = 0; pi < playersCount; ++pi) {
 						int i = swap ? (pi + seedRotate[1]) % playersCount : pi;
-						if (in.hasNextInt())
-						{
+						if (in.hasNextInt()) {
 							scores[i] = in.nextInt();
-						}
-						else
-						{
-							while(!in.hasNextInt() && in.hasNext())
-							{
+						} else {
+							while (!in.hasNextInt() && in.hasNext()) {
 								fullOut.append(in.nextLine()).append("\n");
 							}
 
 							// Try again after referee messages are out of the way
-							if (in.hasNextInt())
-							{
+							if (in.hasNextInt()) {
 								scores[i] = in.nextInt();
 							}
 						}
@@ -140,8 +134,7 @@ public class GameThread extends Thread {
 					}
 				}
 
-				if (fullOut.length()>0)
-				{
+				if (fullOut.length() > 0) {
 					LOG.error("Problem with referee output in game" + game + ". Output content:" + fullOut);
 				}
 
@@ -155,7 +148,8 @@ public class GameThread extends Thread {
 
 				stats.add(scores);
 
-				LOG.info(new StringBuilder().append("End of game ").append(game).append("\t").append(stats));
+				LOG.info(new StringBuilder().append("End of game %s %s vs %s".formatted(game,
+						playersCmd.get(0).playerName(), playersCmd.get(1).playerName())).append("\t"));
 
 			} catch (Exception exception) {
 				LOG.error("Exception in game " + game, exception);
@@ -205,5 +199,11 @@ public class GameThread extends Thread {
 		} catch (Exception exception) {
 			LOG.error("Unable to destroy all");
 		}
+	}
+
+	@Override
+	public ArenaStats call() throws Exception {
+		this.run();
+		return stats;
 	}
 }

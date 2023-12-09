@@ -1,18 +1,30 @@
 package com.magusgeek.brutaltester;
 
-import com.magusgeek.brutaltester.util.Mutable;
-import com.magusgeek.brutaltester.util.SeedGenerator;
-import java.nio.file.*;
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.NotDirectoryException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
-import org.apache.commons.cli.*;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Options;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
+
+import com.magusgeek.brutaltester.util.Mutable;
+import com.magusgeek.brutaltester.util.SeedGenerator;
 
 public class Main {
 
@@ -26,20 +38,27 @@ public class Main {
 		try {
 			Options options = new Options();
 
-			options.addOption("h", false, "Print the help").addOption("v", false, "Verbose mode. Spam incoming.")
+			options //
+					.addOption("f", true, "Folder containing all java players.") //
+					.addOption("h", false, "Print the help") //
+					.addOption("v", false, "Verbose mode. Spam incoming.")
 					.addOption("n", true, "Number of games to play. Default 1.")
 					.addOption("t", true, "Number of thread to spawn for the games. Default 1.")
 					.addOption("r", true, "Required. Referee command line.")
 					.addOption("p1", true, "Required. Player 1 command line.")
 					.addOption("p2", true, "Required. Player 2 command line.")
-					.addOption("p3", true, "Player 3 command line.").addOption("p4", true, "Player 4 command line.")
-					.addOption("l", true, "A directory for games logs").addOption("s", false, "Swap player positions")
-					.addOption("i", true, "Initial seed. For repeatable tests").addOption("o", false, "Old mode");
+					.addOption("p3", true, "Player 3 command line.") //
+					.addOption("p4", true, "Player 4 command line.") //
+					.addOption("l", true, "A directory for games logs") //
+					.addOption("s", false, "Swap player positions") //
+					.addOption("i", true, "Initial seed. For repeatable tests") //
+					.addOption("o", false, "Old mode");
 
 			CommandLine cmd = new DefaultParser().parse(options, args);
 
 			// Need help ?
-			if (cmd.hasOption("h") || !cmd.hasOption("r") || !cmd.hasOption("p1") || !cmd.hasOption("p2")) {
+			if (cmd.hasOption("h") || !cmd.hasOption("r")
+					|| (!cmd.hasOption("p1") || !cmd.hasOption("p2")) && !cmd.hasOption("f")) {
 				new HelpFormatter().printHelp(
 						"-r <referee command line> -p1 <player1 command line> -p2 <player2 command line> -p3 <player3 command line> -p4 <player4 command line> [-o -v -n <games> -t <thread>]",
 						options);
@@ -55,17 +74,6 @@ public class Main {
 			// Referee command line
 			String refereeCmd = cmd.getOptionValue("r");
 			LOG.info("Referee command line: " + refereeCmd);
-
-			// Players command lines
-			List<String> playersCmd = new ArrayList<>();
-			for (int i = 1; i <= 4; ++i) {
-				String value = cmd.getOptionValue("p" + i);
-
-				if (value != null) {
-					playersCmd.add(value);
-					LOG.info("Player " + i + " command line: " + value);
-				}
-			}
 
 			// Games count
 			int n = 1;
@@ -101,21 +109,10 @@ public class Main {
 				SeedGenerator.initialSeed(newSeed);
 				LOG.info("Initial Seed: " + newSeed);
 			}
-			// Prepare stats objects
-			playerStats = new PlayerStats(playersCmd.size());
-			Mutable<Integer> count = new Mutable<>(0);
-
-			// Start the threads
-			try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
-				for (int i = 0; i < t; ++i) {
-					if (cmd.hasOption("o")) {
-						new OldGameThread(i + 1, refereeCmd, playersCmd, count, playerStats, n, logs, swap).start();
-					} else {
-						var gameThread = new GameThread(i + 1, refereeCmd, playersCmd, count, playerStats, n, logs,
-								swap);
-						executorService.submit(gameThread);
-					}
-				}
+			if (cmd.hasOption("f")) {
+				runArena(cmd, refereeCmd, n, logs, swap);
+			} else {
+				runPlayers(cmd, refereeCmd, n, logs, swap);
 			}
 		} catch (Exception exception) {
 			LOG.fatal("cg-brutaltester failed to start", exception);
@@ -123,14 +120,86 @@ public class Main {
 		}
 	}
 
-	public static void finish() {
-		synchronized (playerStats) {
-			finished += 1;
+	private static void runPlayers(CommandLine cmd, String refereeCmd, int n, Path logs, boolean swap) {
+		// Players command lines
+		List<String> playersCmd = new ArrayList<>();
+		for (int i = 1; i <= 4; ++i) {
+			String value = cmd.getOptionValue("p" + i);
 
-			if (finished >= t) {
-				LOG.info("*** End of games ***");
-				playerStats.print();
+			if (value != null) {
+				playersCmd.add(value);
+				LOG.info("Player " + i + " command line: " + value);
 			}
+		}
+
+		// Prepare stats objects
+		playerStats = new PlayerStats(playersCmd.size());
+		Mutable<Integer> count = new Mutable<>(0);
+
+//		// Start the threads
+//		try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
+//			for (int i = 0; i < t; ++i) {
+//				if (cmd.hasOption("o")) {
+//					new OldGameThread(i + 1, refereeCmd, playersCmd, count, playerStats, n, logs, swap).start();
+//				} else {
+//					var gameThread = new GameThread(refereeCmd, playersCmd, count, n, logs, swap);
+//					executorService.submit(gameThread);
+//				}
+//			}
+//		}
+	}
+
+	private static void runArena(CommandLine cmd, String refereeCmd, int n, Path logs, boolean swap) {
+		// Players command lines
+
+		var playersFolder = FileSystems.getDefault().getPath(cmd.getOptionValue("f"));
+		var playerList = new ArrayList<ArenaPlayer>();
+
+		try (DirectoryStream<Path> stream = Files.newDirectoryStream(playersFolder)) {
+			for (Path path : stream) {
+				// Iterate over the paths in the directory and print filenames
+				LOG.info("Found player %s : %s".formatted(path.getFileName().toString().replace(".jar", ""),
+						cmd.getOptionValue("f") + "/" + path.getFileName()));
+				playerList.add( //
+						new ArenaPlayer(path.getFileName().toString().replace(".jar", ""), //
+								"java -jar %s/%s".formatted(cmd.getOptionValue("f"), path.getFileName())));
+			}
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+
+		var size = playerList.size();
+
+		ExecutorService es = Executors.newFixedThreadPool(t);
+		List<Callable<ArenaStats>> todo = new ArrayList<Callable<ArenaStats>>();
+
+		for (var x = 0; x < size; x++) {
+			for (var y = x + 1; y < size; y++) {
+				Mutable<Integer> count = new Mutable<>(0);
+				var players = Arrays.asList(playerList.get(x), playerList.get(y));
+
+				// Start the threads
+				if (cmd.hasOption("o")) {
+					// new OldGameThread(1, refereeCmd, playerList, count, playerStats, n, logs,
+					// swap).start();
+				} else {
+					var gameThread = new GameThread(refereeCmd, players, count, n, logs, swap);
+					todo.add(gameThread);
+				}
+			}
+		}
+		try {
+			List<Future<ArenaStats>> answers = es.invokeAll(todo);
+			while (!answers.stream().allMatch(f -> f.isDone())) {
+				// wait
+			}
+			var playerStatsMerged = answers.stream().map(f -> f.resultNow()).reduce(new ArenaStats(playerList),
+					(a, b) -> ArenaStats.merge(a, b));
+			LOG.info("*** End of games ***");
+			playerStatsMerged.print();
+			System.exit(0);
+		} catch (InterruptedException e) {
+			LOG.error(e.getStackTrace());
 		}
 	}
 }
