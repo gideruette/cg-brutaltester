@@ -30,9 +30,7 @@ public class Main {
 
 	private static final Log LOG = LogFactory.getLog(Main.class);
 
-	private static PlayerStats playerStats;
 	private static int t;
-	private static int finished = 0;
 
 	public static void main(String[] args) {
 		try {
@@ -45,10 +43,6 @@ public class Main {
 					.addOption("n", true, "Number of games to play. Default 1.")
 					.addOption("t", true, "Number of thread to spawn for the games. Default 1.")
 					.addOption("r", true, "Required. Referee command line.")
-					.addOption("p1", true, "Required. Player 1 command line.")
-					.addOption("p2", true, "Required. Player 2 command line.")
-					.addOption("p3", true, "Player 3 command line.") //
-					.addOption("p4", true, "Player 4 command line.") //
 					.addOption("l", true, "A directory for games logs") //
 					.addOption("s", false, "Swap player positions") //
 					.addOption("i", true, "Initial seed. For repeatable tests") //
@@ -109,44 +103,12 @@ public class Main {
 				SeedGenerator.initialSeed(newSeed);
 				LOG.info("Initial Seed: " + newSeed);
 			}
-			if (cmd.hasOption("f")) {
-				runArena(cmd, refereeCmd, n, logs, swap);
-			} else {
-				runPlayers(cmd, refereeCmd, n, logs, swap);
-			}
+			runArena(cmd, refereeCmd, n, logs, swap);
+
 		} catch (Exception exception) {
 			LOG.fatal("cg-brutaltester failed to start", exception);
 			System.exit(1);
 		}
-	}
-
-	private static void runPlayers(CommandLine cmd, String refereeCmd, int n, Path logs, boolean swap) {
-		// Players command lines
-		List<String> playersCmd = new ArrayList<>();
-		for (int i = 1; i <= 4; ++i) {
-			String value = cmd.getOptionValue("p" + i);
-
-			if (value != null) {
-				playersCmd.add(value);
-				LOG.info("Player " + i + " command line: " + value);
-			}
-		}
-
-		// Prepare stats objects
-		playerStats = new PlayerStats(playersCmd.size());
-		Mutable<Integer> count = new Mutable<>(0);
-
-//		// Start the threads
-//		try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
-//			for (int i = 0; i < t; ++i) {
-//				if (cmd.hasOption("o")) {
-//					new OldGameThread(i + 1, refereeCmd, playersCmd, count, playerStats, n, logs, swap).start();
-//				} else {
-//					var gameThread = new GameThread(refereeCmd, playersCmd, count, n, logs, swap);
-//					executorService.submit(gameThread);
-//				}
-//			}
-//		}
 	}
 
 	private static void runArena(CommandLine cmd, String refereeCmd, int n, Path logs, boolean swap) {
@@ -193,6 +155,7 @@ public class Main {
 			while (!answers.stream().allMatch(f -> f.isDone())) {
 				// wait
 			}
+
 			var playerStatsMerged = answers.stream().map(f -> f.resultNow()).reduce(new ArenaStats(playerList),
 					(a, b) -> ArenaStats.merge(a, b));
 			LOG.info("*** End of games ***");
